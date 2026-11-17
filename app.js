@@ -2,6 +2,13 @@ const ENDPOINT = 'https://jsonplaceholder.typicode.com/posts';
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js');
+
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data && event.data.tipo === 'OUTBOX_SINCRONIZADO') {
+      console.log('[UI] Confirmación recibida del Service Worker. Actualizando bandeja...');
+      renderizarColaOutbox();
+    }
+  });
 }
 
 function actualizarIndicadorRed() {
@@ -48,20 +55,29 @@ function procesarEnvioReporte(datosFormulario) {
       });
     })
     .catch(() => {
-      console.warn('[Outbox] Sin conexión. Encolando transacción localmente...');
+      console.warn('[Outbox] Sin conexión. Encolando en IndexedDB...');
       return guardarRegistro({
         ...datosFormulario,
         estado: 'pendiente',
         fechaCreacion: Date.now()
-      });
+      })
+        .then(() => {
+          if ('serviceWorker' in navigator && 'SyncManager' in window) {
+            return navigator.serviceWorker.ready
+              .then((registro) => {
+                console.log('[Outbox] Registrando etiqueta sync-reportes en el SW...');
+                return registro.sync.register('sync-reportes');
+              });
+          }
+        });
     })
     .then(() => {
       return renderizarColaOutbox();
     });
 }
 
-// UPDATE
-function sincronizarPendientes() {
+// UPDATE (fallback para navegadores sin SyncManager)
+function sincronizarPendientesFallback() {
   console.log('[Outbox] Conexión detectada. Buscando registros pendientes...');
 
   return obtenerTodosLosRegistros()
@@ -97,7 +113,11 @@ function sincronizarPendientes() {
 
 window.addEventListener('online', () => {
   actualizarIndicadorRed();
-  sincronizarPendientes();
+
+  if (!('SyncManager' in window)) {
+    console.log('[Outbox] Navegador sin SyncManager. Ejecutando fallback por evento online...');
+    sincronizarPendientesFallback();
+  }
 });
 
 window.addEventListener('offline', actualizarIndicadorRed);
